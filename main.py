@@ -31,12 +31,9 @@ from core.mongo_db import get_admins_collection
 app = FastAPI(title="Student Management API")
 
 frontend_origins = [
-    "https://studentmanagement123212.netlify.app",
     "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "https://studentmanagement123212.netlify.app",
 ]
 
 app.add_middleware(
