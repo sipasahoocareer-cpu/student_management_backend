@@ -39,7 +39,7 @@ app.add_middleware(
         "http://localhost:5176",
         "http://localhost:3000",
 
-        "https://studentmanagement12321.netlify.app"
+        "https://studentmanagement123212.netlify.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
