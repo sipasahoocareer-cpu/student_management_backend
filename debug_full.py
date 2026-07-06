@@ -39,20 +39,20 @@ async def test():
     # Now test the API with admin token (known working)
     async with httpx.AsyncClient() as http:
         login = await http.post(
-            'https://student-managment-backend-2hwz.onrender.com/api/mongo/auth/login',
+            'https://student-management-backend-jqc5.onrender.com/api/mongo/auth/login',
             json={'identifier': 'admin', 'password': 'admin123'}
         )
         token = login.json().get('token')
         headers = {'Authorization': f'Bearer {token}'}
 
-        quizzes = await http.get('hhttps://student-managment-backend-2hwz.onrender.com/api/mongo/quiz', headers=headers)
+        quizzes = await http.get('hhttps://student-management-backend-jqc5.onrender.com/api/mongo/quiz', headers=headers)
         quiz_data = quizzes.json().get('data', [])
         print(f'=== QUIZZES FROM API ({len(quiz_data)} total) ===')
         for q in quiz_data:
             quiz_id = q['id']
             print(f'  quiz_id={quiz_id!r}  title={q["title"]!r}')
             results = await http.get(
-                f'https://student-managment-backend-2hwz.onrender.com/api/mongo/quiz/{quiz_id}/results',
+                f'https://student-management-backend-jqc5.onrender.com/api/mongo/quiz/{quiz_id}/results',
                 headers=headers
             )
             rd = results.json()
