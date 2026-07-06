@@ -30,17 +30,19 @@ from core.mongo_db import get_admins_collection
 
 app = FastAPI(title="Student Management API")
 
+frontend_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://localhost:3000",
+    "https://studentmanagement123212.netlify.app",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-        "http://localhost:5176",
-        "http://localhost:3000",
-
-        "https://studentmanagement123212.netlify.app"
-    ],
+    allow_origins=frontend_origins,
+    allow_origin_regex=r"^https?://(.*\.)?studentmanagement123212\.netlify\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
