@@ -1,0 +1,932 @@
+import json
+from sqlalchemy.orm import Session
+from fastapi import HTTPException, status
+
+from model import User, Attendance, Note, Course, CourseCompletion, Quiz, QuizQuestion, QuizSubmission, MockResult
+from core.crud import create_user
+
+
+def get_profile_service(user: User):
+    return {
+        'success': True,
+        'data': {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'role': user.role
+        }
+    }
+
+
+def get_dashboard_service(user: User):
+    if user.role != 'student':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Students only'
+        )
+
+    return {
+        'success': True,
+        'data': {
+            'student': {
+                'id': user.id,
+                'name': user.name,
+                'attendance': getattr(user, 'attendance', None),
+                'gpa': getattr(user, 'gpa', None)
+            }
+        }
+    }
+
+
+def create_attendance_service(db: Session, user: User, payload: dict):
+    if user.role != 'teacher':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher access required'
+        )
+
+    student_id = payload.get('student_id')
+    status_value = payload.get('status')
+
+    if not student_id or not status_value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='student_id and status are required'
+        )
+
+    attendance = Attendance(
+        student_id=student_id,
+        status=status_value
+    )
+
+    db.add(attendance)
+    db.commit()
+    db.refresh(attendance)
+
+    return {
+        'success': True,
+        'data': {
+            'id': attendance.id,
+            'student_id': attendance.student_id,
+            'status': attendance.status,
+            'date': attendance.date.isoformat()
+        }
+    }
+
+
+def list_attendance_service(db: Session, student_id: int, user: User):
+    if user.role == 'student' and user.id != student_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Students can only view their own attendance'
+        )
+
+    attendance = db.query(Attendance).filter(
+        Attendance.student_id == student_id
+    ).all()
+
+    return {
+        'success': True,
+        'data': [
+            {
+                'id': item.id,
+                'student_id': item.student_id,
+                'status': item.status,
+                'date': item.date.isoformat()
+            }
+            for item in attendance
+        ]
+    }
+
+
+def create_note_service(db: Session, user: User, payload: dict):
+    if user.role not in ['teacher', 'student']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher or student access required'
+        )
+
+    title = payload.get('title')
+    content = payload.get('content')
+
+    if not title or not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='title and content are required'
+        )
+
+    note = Note(
+        title=title,
+        content=content
+    )
+
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+
+    return {
+        'success': True,
+        'data': {
+            'id': note.id,
+            'title': note.title,
+            'content': note.content
+        }
+    }
+
+
+def list_notes_service(db: Session, user: User):
+    notes = db.query(Note).all()
+
+    return {
+        'success': True,
+        'data': [
+            {
+                'id': note.id,
+                'title': note.title,
+                'content': note.content,
+                'created_at': note.created_at.isoformat()
+            }
+            for note in notes
+        ]
+    }
+
+
+def create_course_service(db: Session, user: User, payload: dict):
+    if user.role not in ['teacher', 'admin']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher or admin access required'
+        )
+
+    title = payload.get('title')
+    description = payload.get('description')
+
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Course title is required'
+        )
+
+    course = Course(
+        title=title,
+        description=description,
+        teacher_id=user.id
+    )
+
+    db.add(course)
+    db.commit()
+    db.refresh(course)
+
+    return {
+        'success': True,
+        'data': {
+            'id': course.id,
+            'title': course.title,
+            'description': course.description
+        }
+    }
+
+
+def list_courses_service(db: Session, user: User):
+    courses = db.query(Course).all()
+
+    return {
+        'success': True,
+        'data': [
+            {
+                'id': course.id,
+                'title': course.title,
+                'description': course.description,
+                'teacher_id': course.teacher_id
+            }
+            for course in courses
+        ]
+    }
+
+
+def create_quiz_engine_service(db: Session, user: User, payload: dict):
+    if user.role != 'teacher':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher access required'
+        )
+
+    title = payload.get('title')
+    description = payload.get('description')
+    course_id = payload.get('course_id')
+    total_marks = payload.get('total_marks', 100)
+    questions = payload.get('questions', [])
+
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Quiz title is required'
+        )
+
+    quiz = Quiz(
+        title=title,
+        description=description,
+        total_marks=total_marks,
+        teacher_id=user.id,
+        course_id=course_id
+    )
+    db.add(quiz)
+    db.commit()
+    db.refresh(quiz)
+
+    for question_data in questions:
+        question_text = question_data.get('question')
+        options = question_data.get('options')
+        correct_answer = question_data.get('correct_answer')
+
+        if not question_text:
+            continue
+
+        question = QuizQuestion(
+            quiz_id=quiz.id,
+            question=question_text,
+            options=options,
+            correct_answer=correct_answer
+        )
+        db.add(question)
+
+    db.commit()
+
+    return {
+        'success': True,
+        'data': {
+            'id': quiz.id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'course_id': quiz.course_id,
+            'total_marks': quiz.total_marks,
+            'questions_created': len(questions)
+        }
+    }
+
+
+def get_quiz_engine_service(db: Session, user: User, quiz_id: int):
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Quiz not found'
+        )
+
+    questions = db.query(QuizQuestion).filter(QuizQuestion.quiz_id == quiz_id).all()
+
+    return {
+        'success': True,
+        'data': {
+            'id': quiz.id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'total_marks': quiz.total_marks,
+            'course_id': quiz.course_id,
+            'questions': [
+                {
+                    'id': q.id,
+                    'question': q.question,
+                    'options': q.options,
+                }
+                for q in questions
+            ]
+        }
+    }
+
+
+def list_course_quizzes_service(db: Session, course_id: int, user: User):
+    quizzes = db.query(Quiz).filter(Quiz.course_id == course_id).all()
+
+    return {
+        'success': True,
+        'data': [
+            {
+                'id': quiz.id,
+                'title': quiz.title,
+                'description': quiz.description,
+                'total_marks': quiz.total_marks,
+                'teacher_id': quiz.teacher_id,
+                'course_id': quiz.course_id
+            }
+            for quiz in quizzes
+        ]
+    }
+
+
+def mark_course_complete_service(db: Session, user: User, course_id: int, payload: dict):
+    if user.role not in ['teacher', 'admin']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher or admin access required'
+        )
+
+    student_id = payload.get('student_id')
+
+    if not student_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='student_id is required'
+        )
+
+    student = db.query(User).filter(
+        User.id == student_id,
+        User.role == 'student'
+    ).first()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail='Student not found'
+        )
+
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(
+            status_code=404,
+            detail='Course not found'
+        )
+
+    existing = db.query(CourseCompletion).filter(
+        CourseCompletion.course_id == course_id,
+        CourseCompletion.student_id == student_id
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail='Completion already recorded for this student and course'
+        )
+
+    completion = CourseCompletion(
+        course_id=course_id,
+        student_id=student_id
+    )
+
+    db.add(completion)
+    db.commit()
+    db.refresh(completion)
+
+    return {
+        'success': True,
+        'data': {
+            'id': completion.id,
+            'course_id': completion.course_id,
+            'student_id': completion.student_id,
+            'completed_at': completion.completed_at.isoformat()
+        }
+    }
+
+
+def submit_quiz_engine_service(db: Session, user: User, quiz_id: int, payload: dict):
+    if user.role != 'student':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Student access required'
+        )
+
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Quiz not found'
+        )
+
+    existing = db.query(QuizSubmission).filter(
+        QuizSubmission.quiz_id == quiz_id,
+        QuizSubmission.student_id == user.id
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Quiz already submitted'
+        )
+
+    answers = payload.get('answers')
+    if answers is None:
+        answers = {}
+    elif isinstance(answers, (dict, list)):
+        answers = json.dumps(answers)
+
+    submission = QuizSubmission(
+        quiz_id=quiz_id,
+        student_id=user.id,
+        answers=answers
+    )
+    db.add(submission)
+    db.commit()
+    db.refresh(submission)
+
+    return {
+        'success': True,
+        'data': {
+            'id': submission.id,
+            'quiz_id': submission.quiz_id,
+            'student_id': submission.student_id,
+            'answers': submission.answers,
+            'submitted_at': submission.submitted_at.isoformat()
+        }
+    }
+
+
+def mark_quiz_engine_submission_service(db: Session, user: User, quiz_id: int, payload: dict):
+    if user.role != 'teacher':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher access required'
+        )
+
+    student_id = payload.get('student_id')
+    marks = payload.get('marks')
+
+    if not student_id or marks is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='student_id and marks are required'
+        )
+
+    submission = db.query(QuizSubmission).filter(
+        QuizSubmission.quiz_id == quiz_id,
+        QuizSubmission.student_id == student_id
+    ).first()
+
+    if not submission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Submission not found'
+        )
+
+    submission.marks = marks
+    db.commit()
+    db.refresh(submission)
+
+    return {
+        'success': True,
+        'data': {
+            'id': submission.id,
+            'quiz_id': submission.quiz_id,
+            'student_id': submission.student_id,
+            'marks': submission.marks
+        }
+    }
+
+
+def view_quiz_engine_results_service(db: Session, user: User, quiz_id: int):
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Quiz not found'
+        )
+
+    query = db.query(QuizSubmission).filter(QuizSubmission.quiz_id == quiz_id)
+    if user.role == 'student':
+        query = query.filter(QuizSubmission.student_id == user.id)
+    elif user.role not in ['teacher', 'admin']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Access denied'
+        )
+
+    submissions = query.all()
+
+    results = []
+    for submission in submissions:
+        answers = submission.answers
+        if isinstance(answers, str):
+            try:
+                answers = json.loads(answers)
+            except json.JSONDecodeError:
+                pass
+
+        results.append({
+            'id': submission.id,
+            'student_id': submission.student_id,
+            'answers': answers,
+            'marks': submission.marks,
+            'submitted_at': submission.submitted_at.isoformat()
+        })
+
+    return {
+        'success': True,
+        'quiz': {
+            'id': quiz.id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'total_marks': quiz.total_marks
+        },
+        'results': results
+    }
+
+
+def normalize_class_name(class_value: str) -> str:
+    if not class_value:
+        return ''
+
+    value = class_value.strip().upper()
+    if value == 'PGDCA':
+        return 'PGDCA'
+
+    if value.startswith('CLASS '):
+        parts = value.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            return f'Class {int(parts[1])}'
+        return value.title()
+
+    if value.isdigit():
+        return f'Class {int(value)}'
+
+    if value.endswith('TH') and value[:-2].isdigit():
+        return f'Class {int(value[:-2])}'
+
+    return value.title()
+
+
+def create_quiz_service(db: Session, user: User, payload: dict):
+    if user.role != 'teacher':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher access required'
+        )
+
+    title = payload.get('title')
+    description = payload.get('description')
+    total_marks = payload.get('total_marks', 100)
+    class_name = normalize_class_name(payload.get('class_name') or '')
+
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Quiz title is required'
+        )
+
+    if not class_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Class selection is required'
+        )
+
+    quiz = Quiz(
+        title=title,
+        description=description,
+        total_marks=total_marks,
+        teacher_id=user.id,
+        class_name=class_name
+    )
+
+    db.add(quiz)
+    db.commit()
+    db.refresh(quiz)
+
+    return {
+        'success': True,
+        'data': {
+            'id': quiz.id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'total_marks': quiz.total_marks,
+            'class_name': quiz.class_name
+        }
+    }
+
+
+def list_quizzes_service(db: Session, user: User):
+    query = db.query(Quiz)
+    if user.role == 'teacher':
+        query = query.filter(Quiz.teacher_id == user.id)
+    elif user.role == 'student':
+        class_name = normalize_class_name(getattr(user, 'batch', None) or getattr(user, 'class_name', None) or '')
+        if class_name:
+            query = query.filter(Quiz.class_name == class_name)
+        else:
+            return {
+                'success': True,
+                'data': []
+            }
+
+    quizzes = query.all()
+
+    return {
+        'success': True,
+        'data': [
+            {
+                'id': quiz.id,
+                'title': quiz.title,
+                'description': quiz.description,
+                'total_marks': quiz.total_marks,
+                'teacher_id': quiz.teacher_id,
+                'class_name': quiz.class_name
+            }
+            for quiz in quizzes
+        ]
+    }
+
+
+def delete_quiz_service(db: Session, user: User, quiz_id: int):
+    if user.role != 'teacher':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher access required'
+        )
+
+    quiz = db.query(Quiz).filter(
+        Quiz.id == quiz_id,
+        Quiz.teacher_id == user.id
+    ).first()
+
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Quiz not found'
+        )
+
+    db.delete(quiz)
+    db.commit()
+
+    return {
+        'success': True,
+        'message': 'Quiz deleted successfully'
+    }
+
+
+def submit_quiz_service(db: Session, user: User, quiz_id: int, payload: dict):
+    if user.role != 'student':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Student access required'
+        )
+
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Quiz not found'
+        )
+
+    existing = db.query(QuizSubmission).filter(
+        QuizSubmission.quiz_id == quiz_id,
+        QuizSubmission.student_id == user.id
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Quiz already submitted'
+        )
+
+    answers = payload.get('answers')
+    if answers is None:
+        answers = {}
+    elif isinstance(answers, (dict, list)):
+        answers = json.dumps(answers)
+
+    submission = QuizSubmission(
+        quiz_id=quiz_id,
+        student_id=user.id,
+        answers=answers
+    )
+
+    db.add(submission)
+    db.commit()
+    db.refresh(submission)
+
+    return {
+        'success': True,
+        'data': {
+            'id': submission.id,
+            'quiz_id': submission.quiz_id,
+            'student_id': submission.student_id,
+            'submitted_at': submission.submitted_at.isoformat()
+        }
+    }
+
+
+def mark_quiz_submission_service(db: Session, user: User, quiz_id: int, payload: dict):
+    if user.role != 'teacher':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Teacher access required'
+        )
+
+    student_id = payload.get('student_id')
+    marks = payload.get('marks')
+
+    if not student_id or marks is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='student_id and marks are required'
+        )
+
+    submission = db.query(QuizSubmission).filter(
+        QuizSubmission.quiz_id == quiz_id,
+        QuizSubmission.student_id == student_id
+    ).first()
+
+    if not submission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Submission not found'
+        )
+
+    submission.marks = marks
+    db.commit()
+    db.refresh(submission)
+
+    return {
+        'success': True,
+        'data': {
+            'id': submission.id,
+            'quiz_id': submission.quiz_id,
+            'student_id': submission.student_id,
+            'marks': submission.marks
+        }
+    }
+
+
+def view_quiz_results_service(db: Session, user: User, quiz_id: int):
+    quiz = db.query(Quiz).filter(Quiz.id == quiz_id).first()
+
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Quiz not found'
+        )
+
+    query = db.query(QuizSubmission).filter(QuizSubmission.quiz_id == quiz_id)
+
+    user_role = user.role.value if hasattr(user.role, 'value') else str(user.role).lower()
+    if user_role == 'student':
+        query = query.filter(QuizSubmission.student_id == user.id)
+    elif user_role not in ['teacher', 'admin']:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Access denied'
+        )
+
+    submissions = query.all()
+
+    results = []
+    for submission in submissions:
+        answers = submission.answers
+        if isinstance(answers, str):
+            try:
+                answers = json.loads(answers)
+            except json.JSONDecodeError:
+                pass
+
+        student = db.query(User).filter(User.id == submission.student_id).first()
+        results.append({
+            'id': submission.id,
+            'student_id': submission.student_id,
+            'student_name': student.name if student else None,
+            'answers': answers,
+            'marks': submission.marks,
+            'submitted_at': submission.submitted_at.isoformat()
+        })
+
+    return {
+        'success': True,
+        'quiz': {
+            'id': quiz.id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'total_marks': quiz.total_marks
+        },
+        'results': results
+    }
+
+
+def get_all_students_service(db: Session):
+    students = db.query(User).filter(User.role == 'student').all()
+
+    data = [
+        {
+            'id': s.id,
+            'name': s.name,
+            'email': s.email,
+            'rollNumber': s.roll_number
+        }
+        for s in students
+    ]
+
+    return {
+        'success': True,
+        'data': data
+    }
+
+
+def add_student_service(db: Session, payload: dict):
+    email = (payload.get('email') or '').lower().strip()
+
+    existing_user = db.query(User).filter(User.email == email).first()
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail='Email already registered'
+        )
+
+    user = create_user(
+        db=db,
+        name=payload.get('name'),
+        email=email,
+        password=payload.get('password'),
+        role='student',
+        rollNumber=payload.get('rollNumber'),
+        batch=payload.get('batch'),
+        subject=payload.get('subject')
+    )
+
+    return {
+        'success': True,
+        'data': {
+            'id': user.id,
+            'name': user.name,
+            'email': user.email
+        }
+    }
+
+
+def edit_student_service(db: Session, student_id: int, payload: dict):
+    student = db.query(User).filter(
+        User.id == student_id,
+        User.role == 'student'
+    ).first()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail='Student not found'
+        )
+
+    fields = [
+        'name',
+        'email',
+        'rollNumber',
+        'batch',
+        'subject',
+        'attendance',
+        'gpa'
+    ]
+
+    for key in fields:
+        if key in payload:
+            if key == 'rollNumber':
+                setattr(student, 'roll_number', payload[key])
+            else:
+                setattr(student, key, payload[key])
+
+    db.commit()
+    db.refresh(student)
+
+    return {
+        'success': True,
+        'data': {
+            'id': student.id,
+            'name': student.name
+        }
+    }
+
+
+def delete_student_service(db: Session, student_id: int, course_id: int = None):
+    student = db.query(User).filter(
+        User.id == student_id,
+        User.role == 'student'
+    ).first()
+
+    if not student:
+        raise HTTPException(
+            status_code=404,
+            detail='Student not found'
+        )
+
+    completion_query = db.query(CourseCompletion).filter(
+        CourseCompletion.student_id == student_id
+    )
+
+    if course_id is not None:
+        completion_query = completion_query.filter(CourseCompletion.course_id == course_id)
+
+    completed = completion_query.first()
+
+    if not completed:
+        raise HTTPException(
+            status_code=400,
+            detail='Student must complete the required course before deletion'
+        )
+
+    db.query(Attendance).filter(Attendance.student_id == student_id).delete(synchronize_session=False)
+    db.query(MockResult).filter(MockResult.student_id == student_id).delete(synchronize_session=False)
+    db.query(QuizSubmission).filter(QuizSubmission.student_id == student_id).delete(synchronize_session=False)
+    db.query(CourseCompletion).filter(CourseCompletion.student_id == student_id).delete(synchronize_session=False)
+
+    db.delete(student)
+    db.commit()
+
+    return {
+        'success': True,
+        'message': 'Student removed after course completion'
+    }
