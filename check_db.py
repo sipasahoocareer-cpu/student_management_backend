@@ -3,7 +3,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 async def check():
     try:
-        client = AsyncIOMotorClient('mongodb://localhost:27017', serverSelectionTimeoutMS=3000)
+        client = AsyncIOMotorClient('mongodb+srv://rupasahoo2004_db_user:OalamakxI57VyDwy@cluster0.d5kugf8.mongodb.net/', serverSelectionTimeoutMS=3000)
         await client.admin.command('ping')
         print('MongoDB: CONNECTED')
         db = client['student_management']

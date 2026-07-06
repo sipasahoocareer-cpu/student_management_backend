@@ -11,7 +11,7 @@ load_dotenv(Path('d:/studenttt2/backend/.env'))
 from pymongo.asynchronous.mongo_client import AsyncMongoClient
 
 async def fix():
-    uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
+    uri = os.getenv('MONGODB_URI', 'mongodb+srv://rupasahoo2004_db_user:OalamakxI57VyDwy@cluster0.d5kugf8.mongodb.net/')
     db_name = os.getenv('DB_NAME', 'student_management')
     client = AsyncMongoClient(uri)
     db = client[db_name]
